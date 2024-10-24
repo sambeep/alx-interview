@@ -1,61 +1,99 @@
 #!/usr/bin/python3
+'''A script for parsing HTTP request logs and printing statistics.
+'''
+import re
 import sys
-import signal
 
-# Initialize variables
-total_file_size = 0
-status_code_counts = {
-    200: 0, 301: 0, 400: 0, 401: 0, 403: 0, 404: 0, 405: 0, 500: 0
-}
-valid_status_codes = set(status_code_counts.keys())
-line_count = 0
 
-def print_stats():
-    """Print the total file size and the count of status codes in ascending order."""
-    print(f"File size: {total_file_size}")
-    for code in sorted(status_code_counts.keys()):
-        if status_code_counts[code] > 0:
-            print(f"{code}: {status_code_counts[code]}")
+def extract_input(input_line):
+    '''Extracts sections of a line of an HTTP request log.
+    
+    Args:
+        input_line (str): A single line from the log input.
+    
+    Returns:
+        dict: A dictionary containing status_code and file_size if matched,
+              otherwise returns the default dictionary.
+    '''
+    # Regular expression to match the expected log format
+    log_fmt = (
+        r'(?P<ip>\S+) - \[(?P<date>[^\]]+)\] "GET /projects/260 HTTP/1.1" '
+        r'(?P<status_code>\d{3}) (?P<file_size>\d+)'
+    )
+    
+    match = re.match(log_fmt, input_line)
+    if match:
+        return {
+            'status_code': match.group('status_code'),
+            'file_size': int(match.group('file_size'))
+        }
+    return {'status_code': 0, 'file_size': 0}  # default if line doesn't match
 
-def signal_handler(sig, frame):
-    """Handle keyboard interruption (Ctrl + C)."""
-    print_stats()
-    sys.exit(0)
 
-# Set up signal handler for keyboard interruption
-signal.signal(signal.SIGINT, signal_handler)
+def print_statistics(total_file_size, status_codes_stats):
+    '''Prints the accumulated statistics of the HTTP request log.
+    
+    Args:
+        total_file_size (int): The total size of files processed.
+        status_codes_stats (dict): A dictionary of status code counts.
+    '''
+    print(f'File size: {total_file_size}')
+    for status_code in sorted(status_codes_stats.keys()):
+        if status_codes_stats[status_code] > 0:
+            print(f'{status_code}: {status_codes_stats[status_code]}')
 
-# Process each line from stdin
-try:
-    for line in sys.stdin:
-        parts = line.split()
-        
-        # Check if the line matches the expected format
-        if len(parts) != 7 or not parts[0].count('.') == 3 or not parts[1] == '-' or not parts[3].startswith('"GET') or not parts[4] == 'HTTP/1.1"':
-            continue  # Skip invalid lines
-        
-        try:
-            # Extract file size and status code
-            status_code = int(parts[5])
-            file_size = int(parts[6])
-            
-            # Update total file size
-            total_file_size += file_size
-            
-            # Update status code count if it's a valid code
-            if status_code in valid_status_codes:
-                status_code_counts[status_code] += 1
-            
-            line_count += 1
-            
-            # Every 10 lines, print the stats
-            if line_count % 10 == 0:
-                print_stats()
 
-        except (ValueError, IndexError):
-            continue  # Skip lines with invalid numbers or missing fields
+def update_metrics(line, total_file_size, status_codes_stats):
+    '''Updates the metrics from a given HTTP request log.
 
-except KeyboardInterrupt:
-    print_stats()
-    sys.exit(0)
+    Args:
+        line (str): The line of input from which to retrieve the metrics.
+        total_file_size (int): The current total file size.
+        status_codes_stats (dict): The current counts of status codes.
 
+    Returns:
+        int: The new total file size after updating with the line's file size.
+    '''
+    line_info = extract_input(line)
+    status_code = line_info['status_code']
+    
+    # Update only if the status code is valid
+    if status_code in status_codes_stats:
+        status_codes_stats[status_code] += 1
+    
+    # Return the new total file size
+    return total_file_size + line_info['file_size']
+
+
+def run():
+    '''Starts the log parser. Reads input and prints statistics every 10 lines
+       or upon keyboard interruption (Ctrl+C).
+    '''
+    line_num = 0
+    total_file_size = 0
+    status_codes_stats = {
+        '200': 0,
+        '301': 0,
+        '400': 0,
+        '401': 0,
+        '403': 0,
+        '404': 0,
+        '405': 0,
+        '500': 0,
+    }
+    
+    try:
+        # Read from stdin line by line
+        for line in sys.stdin:
+            total_file_size = update_metrics(line, total_file_size, status_codes_stats)
+            line_num += 1
+            # Print stats every 10 lines
+            if line_num % 10 == 0:
+                print_statistics(total_file_size, status_codes_stats)
+    except (KeyboardInterrupt, EOFError):
+        # Handle Ctrl+C or end of file input gracefully
+        print_statistics(total_file_size, status_codes_stats)
+
+
+if __name__ == '__main__':
+    run()
